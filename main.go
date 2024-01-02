@@ -66,6 +66,14 @@ func main() {
         } else {
             fmt.Println("Wallet group is required for funds withdrawal! Usage: go run main.go withdrawFunds [walletGroup]")
         }
+    case "withdrawNFTS":
+        if arg2 != "" && arg3 != "" {
+            walletGroup := arg2
+            nftAddress := arg3
+            walletmanager.WithdrawNFTS(walletGroup, nftAddress, client, fundingWallet)
+        } else {
+            fmt.Println("Wallet group and NFT address is required for NFT withdrawal! Usage: go run main.go withdrawNFTS [walletGroup] [nftAddress]")
+        }
     default:
         fmt.Println("Invalid argument. Please use 'createWallets' or 'fundWallets'.")
     }

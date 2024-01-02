@@ -6,9 +6,11 @@ import (
     "fmt"
     "log"
     "os"
+	"io"
     "encoding/json"
 	"strings"
 	"math/big"
+	"net/http"
 
 	_ "github.com/joho/godotenv/autoload"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 )
 
 func FundWallets(walletGroup string, ethAmount float64, client *ethclient.Client, FundingWallet string, privateKey *ecdsa.PrivateKey) {
@@ -169,7 +172,7 @@ func getABI(contractAddress string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -184,35 +187,16 @@ func getABI(contractAddress string) (string, error) {
 		return "", fmt.Errorf("Error: %s", etherscanResponse.Message)
 	}
 
-	return etherscanResponse.Result, nil
+	parsedAbi, err := abi.JSON(strings.NewReader(etherscanResponse.Result))
+	if err != nil {
+		return nil, err
+	}
+ 
+	return parsedAbi, nil
 }
 
-func getNFTIDs(walletAddress string, nftContractAddress string) ([]*big.Int, error) {
-    // Get NFT Contract
-    abi, err := getABI(nftContractAddress)
-    if err != nil {
-        return nil, err
-    }
 
-    address := common.HexToAddress(walletAddress)
-    balance, err := abi.BalanceOf(&bind.CallOpts{}, address)
-    if err != nil {
-        return nil, err
-    }
-
-    var ids []*big.Int
-    for i := big.NewInt(0); i.Cmp(balance) < 0; i.Add(i, big.NewInt(1)) {
-        id, err := abi.TokenOfOwnerByIndex(&bind.CallOpts{}, address, i)
-        if err != nil {
-            return nil, err
-        }
-        ids = append(ids, id)
-    }
-
-    return ids, nil
-}
-
-func WithdrawNFTS(walletGroup string, nftContractAddress string) {
+func transferNFT(walletGroup string, client *ethclient.Client, contractAddress, fundingWallet string) error {
 	wallets := strings.ToLower(walletGroup)
 
 	if _, err := os.Stat(fmt.Sprintf("wallet-manager/wallet-data/%s", wallets)); err == nil {
@@ -220,39 +204,27 @@ func WithdrawNFTS(walletGroup string, nftContractAddress string) {
 
 		err := json.Unmarshal([]byte(fmt.Sprintf("wallet-manager/wallet-data/%s", wallets)), &walletList)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 
-        for _, w := range walletList {
+        abi, err := getABI(contractAddress)
+        if err != nil {
+            return err
+        }
 
-			// Get all NFT IDs owned by the wallet
-			ids, err := getNFTIDs(w.address, nftContractAddress)
+        contract := bind.NewBoundContract(address common.Address, abi abi.ABI, caller ContractCaller, transactor ContractTransactor, filterer ContractFilterer)
+
+		for _, w := range walletList {
+			// Create a new instance of the contract for each wallet
+			contract := bind.NewBoundContract(common.HexToAddress(contractAddress), abi, client, common.HexToAddress(w.Address), nil)
+		  
+			// Call the Transfer function
+			tx, err := contract.Transfer(common.HexToAddress(w.Address), common.HexToAddress(recipientAddress), tokenId)
 			if err != nil {
 				log.Fatal(err)
 			}
-
-            // Declare Transaction Parameters
-            nonce, err := client.PendingNonceAt(context.Background(), common.HexToAddress(w.address))
-            if err != nil {
-                log.Fatal(err)
-            }
-
-            // Declare NFT Transfer Parameters
-            gasPrice, err := client.SuggestGasPrice(context.Background())
-            if err != nil {
-                log.Fatal(err)
-            }
-
-            gasLimit, err := client.EstimateGas(context.Background(), msg) 
-            totalGas := new(big.Int).Mul(gasPrice, big.NewInt(int64(gasLimit)))
-
-            // Get NFT Contract
-            abi, err := getABI(nftContractAddress)
-            if err != nil {
-                log.Fatal(err)
-            }
-
-			
-		}
+		  
+			fmt.Printf("Transaction sent: %s", tx.Hash().Hex())
+		  }
 	}
 }
