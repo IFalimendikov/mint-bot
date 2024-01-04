@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 )
 
@@ -163,37 +164,67 @@ type EtherscanResponse struct {
 	Result  string `json:"result"`
 }
 
-func getABI(contractAddress string) (string, error) {
+
+
+func getABI(contractAddress string) (abi.ABI, error) {
 	url := fmt.Sprintf("https://api.etherscan.io/api?module=contract&action=getabi&address=%s&apikey=YourApiKeyToken", contractAddress)
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return "", err
+		return abi.ABI{}, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return abi.ABI{}, err
 	}
 
 	var etherscanResponse EtherscanResponse
 	err = json.Unmarshal(body, &etherscanResponse)
 	if err != nil {
-		return "", err
+		return abi.ABI{}, err
 	}
 
 	if etherscanResponse.Status != "1" {
-		return "", fmt.Errorf("Error: %s", etherscanResponse.Message)
+		return abi.ABI{}, fmt.Errorf("Error: %s", etherscanResponse.Message)
 	}
 
 	parsedAbi, err := abi.JSON(strings.NewReader(etherscanResponse.Result))
 	if err != nil {
-		return nil, err
+		return abi.ABI{}, err
 	}
- 
+
 	return parsedAbi, nil
 }
+
+func getIDs(contractAddress string, client *ethclient.Client) ([]uint256, error) {
+	abi, err := getABI(contractAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	address := common.HexToAddress(contractAddress)
+	contract := bind.NewBoundContract(address, abi, client, client, client)
+
+	totalSupply, err := contract.TotalSupply(&bind.CallOpts{})
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]uint256, totalSupply)
+	for i := uint256(0); i < totalSupply; i++ {
+		id, err := contract.TokenOfOwnerByIndex(&bind.CallOpts{}, common.HexToAddress(fundingWallet), i)
+		if err != nil {
+			return nil, err
+		}
+		ids[i] = id
+	}
+
+	return ids, nil
+}
+
+
 
 
 func transferNFT(walletGroup string, client *ethclient.Client, contractAddress, fundingWallet string) error {
@@ -212,19 +243,29 @@ func transferNFT(walletGroup string, client *ethclient.Client, contractAddress, 
             return err
         }
 
-        contract := bind.NewBoundContract(address common.Address, abi abi.ABI, caller ContractCaller, transactor ContractTransactor, filterer ContractFilterer)
+		chainID, err := client.NetworkID(context.Background())
 
 		for _, w := range walletList {
+			// Set Private Key
+			privateKey, err := crypto.HexToECDSA(w.PrivateKey)
+			if err != nil {
+                log.Fatal(err)
+            }
+			// Create a transactor for each wallet
+			auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
+			if err != nil {
+				return err
+			}
+			
 			// Create a new instance of the contract for each wallet
-			contract := bind.NewBoundContract(common.HexToAddress(contractAddress), abi, client, common.HexToAddress(w.Address), nil)
+			contract := bind.NewBoundContract(common.HexToAddress(contractAddress), abi, client, client, client)
 		  
 			// Call the Transfer function
-			tx, err := contract.Transfer(common.HexToAddress(w.Address), common.HexToAddress(recipientAddress), tokenId)
+			tx, err := contract.Transact(auth, "setState", )
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalf("Failed to call state-changing method: %v", err)
 			}
-		  
-			fmt.Printf("Transaction sent: %s", tx.Hash().Hex())
+			fmt.Printf("Transaction sent: %s\n", tx.Hash().Hex())
 		  }
 	}
 }
